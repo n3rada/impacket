@@ -38,7 +38,7 @@ from impacket import LOG
 from impacket.ldap.ldapasn1 import Filter, Control, SimplePagedResultsControl, ResultCode, Scope, DerefAliases, Operation, \
     KNOWN_CONTROLS, CONTROL_PAGEDRESULTS, NOTIFICATION_DISCONNECT, KNOWN_NOTIFICATIONS, BindRequest, SearchRequest, \
     SearchResultDone, LDAPMessage, AddRequest, ModifyRequest, ModifyDNRequest, DelRequest
-from impacket.ntlm import getNTLMSSPType1, getNTLMSSPType3, VERSION, hmac_md5, NTLMAuthChallenge
+from impacket.ntlm import getNTLMSSPType1, getNTLMSSPType3, hmac_md5, NTLMAuthChallenge
 from impacket.spnego import SPNEGO_NegTokenInit, SPNEGO_NegTokenResp, SPNEGOCipher, TypesMech
 
 try:
@@ -105,7 +105,7 @@ def get_entry_value(entry, attribute_name):
     return values[0] if values else None
 
 class LDAPConnection:
-    def __init__(self, url, baseDN='', dstIp=None, signing=True, timeout=None):
+    def __init__(self, url, baseDN='', dstIp=None, signing=True, timeout=None, ntlm_version=None):
         """
         LDAPConnection class
 
@@ -113,6 +113,7 @@ class LDAPConnection:
         :param string baseDN:
         :param string dstIp:
         :param timeout: connection timeout in seconds (None = blocking)
+        :param VERSION ntlm_version: Optional NTLM OS version structure
 
         :return: a LDAP instance, if not raises a LDAPSessionError exception
         """
@@ -123,6 +124,7 @@ class LDAPConnection:
         self._baseDN = baseDN
         self._dstIp = dstIp
         self.__signing = signing
+        self._ntlm_version = ntlm_version
 
         if url.startswith('ldap://'):
             self._dstPort = 389
@@ -433,10 +435,9 @@ class LDAPConnection:
                     pass
 
             bindRequest['name'] = ''
-            self.version = VERSION()
-            self.version['ProductMajorVersion'], self.version['ProductMinorVersion'], self.version['ProductBuild'] = 10, 0, 19041
-            # NTLM Negotiate
-            negotiate = getNTLMSSPType1('', domain, signingRequired=self.__signing, use_ntlmv2=True, version=self.version)
+            # [MS-NLMP] 2.2.2.10: VERSION is absent unless explicitly
+            # negotiated; LDAP does not require a client OS version here.
+            negotiate = getNTLMSSPType1('', domain, signingRequired=self.__signing, use_ntlmv2=True, version=self._ntlm_version)
 
             blob = SPNEGO_NegTokenInit()
             blob['MechTypes'] = [TypesMech['NTLMSSP - Microsoft NTLM Security Support Provider']]
@@ -463,7 +464,7 @@ class LDAPConnection:
                 channel_binding_value = self.channel_binding_value
             
             # NTLM Auth
-            type3, exportedSessionKey = getNTLMSSPType3(negotiate, type2, user, password, domain, lmhash, nthash, service='ldap', version=self.version, use_ntlmv2=True, channel_binding_value=channel_binding_value)
+            type3, exportedSessionKey = getNTLMSSPType3(negotiate, type2, user, password, domain, lmhash, nthash, service='ldap', version=self._ntlm_version, use_ntlmv2=True, channel_binding_value=channel_binding_value)
             
             # calculate MIC
             newmic = hmac_md5(exportedSessionKey, negotiate.getData() + NTLMAuthChallenge(type2).getData() + type3.getData())
